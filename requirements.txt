@@ -1,7 +1,7 @@
 streamlit==1.51.0
 python-dotenv==1.0.1
 langchain-groq==0.3.8
-langchain-core==0.3.20
+langchain-core==0.3.79
 langgraph==0.6.7
-groq==0.9.0
+groq>=0.30.0,<1.0.0
 pytest-json-report==1.5.0
