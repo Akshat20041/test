@@ -161,6 +161,8 @@ REQUIREMENTS:
 4. Self-contained file (no external imports)
 5. Add imports: pytest, typing.Callable, Union, Tuple
 6. Implement WORKING placeholder functions (not just raise NotImplementedError)
+7. CRITICAL: If using mixins/inheritance, ensure all properties/methods are accessible
+8. Verify class inheritance chains - properties must be inherited from correct parent classes
 
 FEEDBACK: {feedback_text}
 
