@@ -473,15 +473,15 @@ def execution_node(state: AgentState) -> AgentState:
     return state
 
 def critic_node(state: AgentState) -> AgentState:
-    """Critic Agent - Analyzes results and decides next step."""
+    """Critic Agent - Analyzes pytest results safely and provides specific feedback."""
     
-    summary = state["report"].get("summary", {})
+    summary = state["report"].get("summary", {}) if state.get("report") else {}
     collected = summary.get("collected", 0)
     passed = summary.get("passed", 0)
     failed = summary.get("failed", 0)
     errors = summary.get("errors", 0)
-    
-    # SUCCESS: All tests passed
+
+    # All tests passed
     if collected > 0 and passed == collected and failed == 0 and errors == 0:
         state["status"] = "success"
         state["feedback"] = "All tests passed successfully"
@@ -491,95 +491,63 @@ def critic_node(state: AgentState) -> AgentState:
             "action": f"✅ SUCCESS - {passed}/{collected} tests passed"
         })
         return state
-    
-    # Extract failed test details
+
+    # Summarize failed tests
     failed_tests = []
-    if state["report"].get("tests"):
+    if state.get("report", {}).get("tests"):
         for test in state["report"]["tests"]:
             if test.get("outcome") in ["failed", "error"]:
                 failed_tests.append({
                     "name": test.get("nodeid", ""),
-                    "error": test.get("longrepr", "")[:400]
+                    "error": test.get("longrepr", "")[:300]
                 })
-    
-    pytest_output = state["pytest_output"][:1200] if state["pytest_output"] else ""
-    pytest_stderr = state["pytest_stderr"][:800] if state["pytest_stderr"] else ""
-    
-    framework = state.get("framework", "generic")
-    
+
+    pytest_output = (state.get("pytest_output") or "")[-1000:]
+    pytest_stderr = (state.get("pytest_stderr") or "")[-500:]
+
+    # Keep the critic prompt short — this was the crash cause
     prompt = f"""
-Analyze pytest results and provide SPECIFIC, ACTIONABLE feedback.
+You are a test analysis expert.
 
-FRAMEWORK: {framework.upper()}
+RESULT SUMMARY:
+Collected: {collected} | Passed: {passed} | Failed: {failed} | Errors: {errors}
 
-RESULTS:
-- Collected: {collected} (Expected: {state['num_functions']})
-- Passed: {passed}
-- Failed: {failed}
-- Errors: {errors}
-- Iteration: {state['iteration']} of {state['max_iterations']}
+If tests failed, provide **specific actionable feedback**:
+- What went wrong (bad assertions, missing fixture, wrong expected value)
+- How to fix (adjust test logic, use correct client fixture, etc.)
 
-FAILED TESTS (detailed):
-{json.dumps(failed_tests[:3], indent=2)}
+FAILED TESTS (first 2):
+{json.dumps(failed_tests[:2], indent=2)}
 
-PYTEST OUTPUT (last 1200 chars):
-{pytest_output}
-
-STDERR:
+STDERR (truncated):
 {pytest_stderr}
 
-YOUR TASK: Analyze failures and provide SPECIFIC fixes.
+PYTEST OUTPUT (truncated):
+{pytest_output}
 
-Common Flask test issues:
-1. Missing client fixture in test signature - ALL tests need (client) parameter
-2. Calling routes directly instead of using client.get()/post()
-3. Wrong assertion on response format (use response.data or response.get_json())
-4. Not checking response.status_code
-5. Shared state between tests (items list not cleared)
-
-Common generic test issues:
-1. Incorrect function calls or parameters
-2. Wrong expected values in assertions
-3. Missing imports or fixtures
-4. Type mismatches in assertions
-
-RESPONSE FORMAT (JSON only):
-
-If all tests passed:
-{{"status": "success", "message": "All tests passed"}}
-
-If tests failed with SPECIFIC issues:
-{{"status": "needs_fix", "feedback": "SPECIFIC ACTIONABLE FIXES: 1) test_get_item: Use client.get('/items/0') not get_item(0). 2) test_add_item: Use client.post('/items', json={{...}}) not add_item(). 3) All tests need 'client' fixture parameter."}}
-
-If wrong number collected:
-{{"status": "needs_fix", "feedback": "Expected {state['num_functions']} tests but collected {collected}. Regenerate with correct count and ensure all tests are properly named."}}
-
-If max iterations reached:
-{{"status": "max_iterations", "message": "Maximum iterations reached"}}
-
-Be VERY SPECIFIC about what's wrong and how to fix it. Include test names and exact changes needed. Return ONLY valid JSON.
+Respond in compact JSON format:
+{{
+  "status": "success" | "needs_fix",
+  "feedback": "specific, actionable, concise feedback"
+}}
 """
-    
-    messages = [HumanMessage(content=prompt)]
-    response = llm_critic.invoke(messages)
-    
+
     try:
-        json_match = re.search(r'\{.*\}', response.content, re.DOTALL)
-        if json_match:
-            result = json.loads(json_match.group())
-        else:
-            result = {"status": "needs_fix", "feedback": "Could not parse critic response"}
-    except:
-        result = {"status": "needs_fix", "feedback": "Error parsing critic response"}
-    
+        response = llm_critic.invoke([HumanMessage(content=prompt)])
+        match = re.search(r'\{.*\}', response.content, re.DOTALL)
+        result = json.loads(match.group()) if match else {"status": "needs_fix", "feedback": "No valid JSON returned"}
+    except Exception as e:
+        result = {"status": "needs_fix", "feedback": f"Critic crashed: {str(e)[:100]}"}
+
     state["status"] = result.get("status", "unknown")
-    state["feedback"] = result.get("feedback", result.get("message", ""))
+    state["feedback"] = result.get("feedback", "")
     state["history"].append({
         "iteration": state["iteration"],
         "agent": "critic",
-        "action": f"Analysis: {state['status']} - {passed}/{collected} passed"
+        "action": f"Analysis: {state['status']} ({passed}/{collected} passed)"
     })
 
+    # Next iteration setup
     if state["status"] == "needs_fix":
         state["iteration"] += 1
 
