@@ -5,9 +5,6 @@ import subprocess
 from typing import TypedDict, Annotated
 import streamlit as st
 
-import importlib, subprocess, sys
-if importlib.util.find_spec("dotenv") is None:
-    subprocess.run([sys.executable, "-m", "pip", "install", "python-dotenv==1.0.1"])
 from dotenv import load_dotenv
 
 from langchain_groq import ChatGroq
